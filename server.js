@@ -8,15 +8,39 @@ const axios = require('axios');
 require('dotenv').config();
 
 const app = express();
-app.use(cors());
-app.use(express.json());
-app.use(express.static('.')); // Serve static files from the current directory
 
-// MongoDB 连接
-mongoose.connect('mongodb+srv://wanoarckaido:IKlOtl8D9bBEn1IR@soccer-prediction.aaekq3f.mongodb.net/soccer-prediction?retryWrites=true&w=majority&appName=Football-Prediction', {
+// CORS configuration for production
+const corsOptions = {
+  origin: process.env.NODE_ENV === 'production' 
+    ? (process.env.CORS_ORIGINS ? process.env.CORS_ORIGINS.split(',') : ['https://your-netlify-app.netlify.app'])
+    : ['http://localhost:3000', 'http://127.0.0.1:3000', 'http://localhost:5500', 'http://127.0.0.1:5500'],
+  credentials: true,
+  optionsSuccessStatus: 200,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization']
+};
+
+app.use(cors(corsOptions));
+app.use(express.json());
+
+// Health check endpoint for Render
+app.get('/health', (req, res) => {
+  res.status(200).json({ status: 'OK', timestamp: new Date().toISOString() });
+});
+
+// MongoDB connection using environment variable
+const MONGODB_URI = process.env.MONGODB_URI || 'mongodb+srv://wanoarckaido:IKlOtl8D9bBEn1IR@soccer-prediction.aaekq3f.mongodb.net/soccer-prediction?retryWrites=true&w=majority&appName=Football-Prediction';
+
+mongoose.connect(MONGODB_URI, {
   useNewUrlParser: true,
   useUnifiedTopology: true,
-}).then(() => console.log('MongoDB Connected'));
+}).then(() => {
+  console.log('MongoDB Connected');
+  console.log('Environment:', process.env.NODE_ENV || 'development');
+}).catch(err => {
+  console.error('MongoDB connection error:', err);
+  process.exit(1);
+});
 
 // 模型定义
 const UserSchema = new mongoose.Schema({
