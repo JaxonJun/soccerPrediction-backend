@@ -9,9 +9,21 @@ require('dotenv').config();
 
 const app = express();
 
+// Keep service alive (prevent sleeping)
+if (process.env.NODE_ENV === 'production') {
+  const keepAliveInterval = setInterval(async () => {
+    try {
+      const response = await axios.get(`${process.env.RENDER_URL || 'https://soccerprediction-backend.onrender.com'}/health`);
+      console.log(`Keep-alive: ${response.status} at ${new Date().toISOString()}`);
+    } catch (error) {
+      console.log(`Keep-alive failed: ${error.message}`);
+    }
+  }, 14 * 60 * 1000); // Every 14 minutes
+}
+
 // CORS configuration for production
 const corsOptions = {
-  origin: process.env.NODE_ENV === 'production' 
+  origin: process.env.NODE_ENV === 'production'
     ? (process.env.CORS_ORIGINS ? process.env.CORS_ORIGINS.split(',') : ['https://your-netlify-app.netlify.app'])
     : ['http://localhost:3000', 'http://127.0.0.1:3000', 'http://localhost:5500', 'http://127.0.0.1:5500'],
   credentials: true,
@@ -31,10 +43,7 @@ app.get('/health', (req, res) => {
 // MongoDB connection using environment variable
 const MONGODB_URI = process.env.MONGODB_URI || 'mongodb+srv://wanoarckaido:IKlOtl8D9bBEn1IR@soccer-prediction.aaekq3f.mongodb.net/soccer-prediction?retryWrites=true&w=majority&appName=Football-Prediction';
 
-mongoose.connect(MONGODB_URI, {
-  useNewUrlParser: true,
-  useUnifiedTopology: true,
-}).then(() => {
+mongoose.connect(MONGODB_URI).then(() => {
   console.log('MongoDB Connected');
   console.log('Environment:', process.env.NODE_ENV || 'development');
 }).catch(err => {
@@ -111,37 +120,37 @@ app.get('/api/odds/:sportKey', async (req, res) => {
     });
     const oddsData = response.data;
     await Match.deleteMany({ sportKey });
-    
+
     // Update the Match schema to include drawOdds
     if (!Match.schema.paths.drawOdds) {
       Match.schema.add({ drawOdds: Number });
     }
-    
+
     const insertPromises = oddsData.map(async (match) => {
       // Extract odds for home team, away team, and draw
       let oddsA = 0;
       let oddsB = 0;
       let drawOdds = 0;
-      
+
       // Try to find the bookmaker with the most complete odds
       const bookmaker = match.bookmakers && match.bookmakers.length > 0 ? match.bookmakers[0] : null;
-      
+
       if (bookmaker && bookmaker.markets && bookmaker.markets.length > 0) {
         const market = bookmaker.markets.find(m => m.key === 'h2h') || bookmaker.markets[0];
-        
+
         if (market && market.outcomes && market.outcomes.length > 0) {
           // Find home team odds
           const homeOutcome = market.outcomes.find(o => o.name === match.home_team);
           if (homeOutcome) {
             oddsA = homeOutcome.price;
           }
-          
+
           // Find away team odds
           const awayOutcome = market.outcomes.find(o => o.name === match.away_team);
           if (awayOutcome) {
             oddsB = awayOutcome.price;
           }
-          
+
           // Find draw odds
           const drawOutcome = market.outcomes.find(o => o.name === 'Draw');
           if (drawOutcome) {
@@ -149,7 +158,7 @@ app.get('/api/odds/:sportKey', async (req, res) => {
           }
         }
       }
-      
+
       const newMatch = new Match({
         matchId: match.id,
         sportKey,
@@ -163,7 +172,7 @@ app.get('/api/odds/:sportKey', async (req, res) => {
       });
       return newMatch.save();
     });
-    
+
     await Promise.all(insertPromises);
     res.json({ message: 'Odds data inserted', count: oddsData.length, timestamp: new Date().toISOString() });
   } catch (error) {
@@ -496,10 +505,10 @@ app.post('/api/admin/matches', async (req, res) => {
   try {
     for (const match of matches) {
       const { matchId, teamA, teamB, oddsA, oddsB, scoreA, scoreB, sportKey } = match;
-      
+
       // Check if this match already exists
       const existingMatch = await Match.findOne({ matchId });
-      
+
       // If it's a new match with teams that already exist in a match, consider it a potential duplicate
       if (!existingMatch && teamA && teamB) {
         const duplicateTeamMatch = await Match.findOne({
@@ -507,7 +516,7 @@ app.post('/api/admin/matches', async (req, res) => {
           teamB: teamB,
           sportKey: sportKey
         });
-        
+
         if (duplicateTeamMatch) {
           results.duplicates.push({
             matchId,
@@ -518,12 +527,12 @@ app.post('/api/admin/matches', async (req, res) => {
           continue; // Skip this match
         }
       }
-      
+
       let result = 'pending';
       if (scoreA !== null && scoreB !== null) {
         result = scoreA > scoreB ? 'teamA' : scoreA < scoreB ? 'teamB' : 'draw';
       }
-      
+
       if (existingMatch) {
         // Update existing match
         await Match.updateOne(
@@ -534,21 +543,21 @@ app.post('/api/admin/matches', async (req, res) => {
       } else {
         // Add new match
         await Match.create({
-          matchId, 
-          sportKey, 
-          teamA, 
-          teamB, 
-          oddsA, 
-          oddsB, 
-          scoreA, 
-          scoreB, 
-          result, 
+          matchId,
+          sportKey,
+          teamA,
+          teamB,
+          oddsA,
+          oddsB,
+          scoreA,
+          scoreB,
+          result,
           lastUpdated: new Date()
         });
         results.added.push({ matchId, teamA, teamB });
       }
     }
-    
+
     // Prepare response message
     let message = '';
     if (results.added.length > 0) {
@@ -560,17 +569,17 @@ app.post('/api/admin/matches', async (req, res) => {
     if (results.duplicates.length > 0) {
       message += `${results.duplicates.length} potential duplicates skipped. `;
     }
-    
-    res.json({ 
+
+    res.json({
       message: message || 'No changes made',
       results,
-      timestamp: new Date().toISOString() 
+      timestamp: new Date().toISOString()
     });
   } catch (error) {
     console.error('Error adding/updating matches:', error);
-    res.status(500).json({ 
-      error: 'Failed to process matches', 
-      details: error.message 
+    res.status(500).json({
+      error: 'Failed to process matches',
+      details: error.message
     });
   }
 });
